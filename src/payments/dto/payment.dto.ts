@@ -14,71 +14,19 @@ import mongoose, { ObjectId } from 'mongoose';
 export class InitiatePaymentDto {
   @IsPositive()
   @IsNumber()
-  InvoiceAmount: number;
+  amount: number;
   @IsString()
-  CurrencyIso: string;
-}
-
-class InvoiceItem {
-  @IsString()
-  ItemName: string;
-
-  @IsNumber()
-  @Min(1)
-  Quantity: number;
-
-  @IsNumber()
-  @Min(0)
-  UnitPrice: number;
-}
-
-class CustomerAddress {
-  @IsString()
-  Block: string;
-
-  @IsString()
-  Street: string;
-
-  @IsString()
-  HouseBuildingNo: string;
-
-  @IsString()
-  @IsOptional()
-  Address?: string;
-
-  @IsString()
-  @IsOptional()
-  AddressInstructions?: string;
+  currency: string;
 }
 
 export class ExecutePaymentDto {
   @IsString()
-  PaymentMethodId: string;
+  paymentMethodId: string;
   @IsNumber()
-  InvoiceValue: number;
+  amount: number;
   @IsOptional()
   @IsString()
-  DisplayCurrencyIso: string;
-  @IsOptional()
-  @IsString()
-  MobileCountryCode: string;
-  @IsOptional()
-  @IsString()
-  CustomerMobile: string;
-  @IsOptional()
-  @IsString()
-  Language: string;
-  @IsString()
-  @IsOptional()
-  CustomerCivilId: string;
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => CustomerAddress)
-  CustomerAddress: CustomerAddress;
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => InvoiceItem)
-  InvoiceItems: InvoiceItem[];
+  currency: string;
 }
 
 export class ServiceExecutePaymentDto extends ExecutePaymentDto {
@@ -86,21 +34,19 @@ export class ServiceExecutePaymentDto extends ExecutePaymentDto {
   CustomerEmail: string; //auth
   CallBackUrl: string; //fixed
   ErrorUrl: string; //fixed
-  CustomerReference: mongoose.Types.ObjectId; //fixed
   ExpireDate: string; //fixed
 }
 
 export class GetPaymentStatusDto {
   @IsString()
-  Key: string;
-  @IsString()
-  KeyType: string;
+  paymentReference: string;
 }
 
 export class CreatePaymentDto {
   userId: mongoose.Types.ObjectId;
-
+  paymentReference: string;
+  expireDate:Date;
+  url:String;
   status?: Status;
-
   result?: object;
 }

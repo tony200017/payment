@@ -7,7 +7,18 @@ import { Payment, PaymentSchema } from './payments.model';
 
 @Module({
   imports: [
-    HttpModule,
+    HttpModule.registerAsync({
+      imports: [],
+      useFactory: async () => ({
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        json: true,
+      }),
+      
+    }),
+    
     MongooseModule.forFeature([{ name: Payment.name, schema: PaymentSchema }]),
   ],
   controllers: [PaymentsController],

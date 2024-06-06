@@ -13,6 +13,12 @@ export class Payment {
   userId: mongoose.Types.ObjectId;
   @Prop({ type: String, default: Status.pending })
   status: Status;
+  @Prop({ type: String})
+  paymentReference: string;
+  @Prop({type:Date})
+  expireDate:Date;
+  @Prop({type:String})
+  url:string;
   @Prop({ type: Object })
   result: Object;
 }

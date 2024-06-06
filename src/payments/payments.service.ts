@@ -1,4 +1,4 @@
-import { HttpException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   CreatePaymentDto,
   ExecutePaymentDto,
@@ -7,12 +7,13 @@ import {
   ServiceExecutePaymentDto,
 } from './dto/payment.dto';
 import { HttpService } from '@nestjs/axios';
-import { catchError, firstValueFrom, map } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
 import { User } from 'src/global/types';
 import { InjectModel } from '@nestjs/mongoose';
 import { Payment, PaymentDocument, Status } from './payments.model';
 import mongoose, { Model } from 'mongoose';
+import * as moment from 'moment';
 
 @Injectable()
 export class PaymentsService {
@@ -27,65 +28,108 @@ export class PaymentsService {
     let baseURL = this.configService.get<string>('baseUrl.myFatoorah');
     let options = {
       method: 'POST',
-      url: baseURL + '/v2/InitiatePayment',
-      headers: {
-        Accept: 'application/json',
-        Authorization: 'Bearer ' + token,
-        'Content-Type': 'application/json',
+      url:
+        baseURL +
+        this.configService.get<string>('myFatoorahApi.initialPayment'),
+        token: 'Bearer ' + token,
+      body: {
+        InvoiceAmount: initiatePaymentDto.amount,
+        CurrencyIso: initiatePaymentDto.currency,
       },
-      body: initiatePaymentDto,
-      json: true,
     };
-    try {
-      let response = await firstValueFrom(
-        this.httpService.post(options.url, options.body, {
-          headers: options.headers,
-        }),
-      );
-      return response.data;
-    } catch (error) {
-      return error.response.data;
-    }
+    let response = await this.sendData(options);
+
+    const processedPaymentMethods = response.Data.PaymentMethods.map(
+      (method: any) => {
+        const { ImageUrl, PaymentMethodId, PaymentMethodAr } = method;
+        return {
+          paymentMethodId: PaymentMethodId,
+          imageUrl: ImageUrl,
+          paymentMethodName: PaymentMethodAr,
+        };
+      },
+    );
+
+    // Create the final response object
+    const finalResponse = {
+      isSuccess: response.IsSuccess,
+      message: response.Message,
+      data: {
+        PaymentMethods: processedPaymentMethods,
+      },
+    };
+    return finalResponse;
   }
 
   async executePayment(executePayment: ExecutePaymentDto, user: User) {
-    let createdPayment: CreatePaymentDto = {
-      userId: new mongoose.Types.ObjectId(user._id),
-    };
-    let paymentId = await this.create(createdPayment);
-    let CustomerName = user.firstName + ' ' + user.lastName; //auth
-    let CustomerEmail = user.email; //auth
-    let CallBackUrl = 'http://localhost:3004/'; //fixed
-    let ErrorUrl = 'http://localhost:3004/'; //fixed
-    let CustomerReference = paymentId; //fixed
-    let ExpireDate = new Date(); //fixed
-    ExpireDate.setHours(ExpireDate.getHours() + 1);
+    //check for pending payment that isn't expired
+    let pendingPayment = await this.findPayment(user._id);
+    if(pendingPayment){
+      if(pendingPayment.expireDate< moment().toDate()){
+        return   {
+          isSuccess: true,
+          message: "link already exist",
+          data: {
+            paymentReference: pendingPayment.paymentReference,
+            PaymentUrl:pendingPayment.url,
+          },
+        };
+      }
+    } 
+   
+//fill the field
+    let CustomerName = user.firstName + ' ' + user.lastName;
+    let CustomerEmail = user.email;
+    let CallBackUrl = this.configService.get<string>(
+      'myFatoorahApi.callBackUrl',
+    );
+    let ErrorUrl = this.configService.get<string>('myFatoorahApi.errorUrl');
+
+    let expireDate = moment().add(15,'m').toDate();
+    
     let bodyInfo: ServiceExecutePaymentDto = {
       CustomerName,
       CustomerEmail,
       CallBackUrl,
       ErrorUrl,
-      CustomerReference,
-      ExpireDate: ExpireDate.toString(),
+      ExpireDate: expireDate.toString(),
       ...executePayment,
     };
     let token = this.configService.get<string>('secrets.myFatoorahToken');
     let baseURL = this.configService.get<string>('baseUrl.myFatoorah');
     let options = {
       method: 'POST',
-      url: baseURL + '/v2/ExecutePayment',
-      headers: {
-        Accept: 'application/json',
-        Authorization: 'Bearer ' + token,
-        'Content-Type': 'application/json',
+      url:
+        baseURL +
+        this.configService.get<string>('myFatoorahApi.executePayment'),
+        token: 'Bearer ' + token,
+      body: {
+        PaymentMethodId: bodyInfo.paymentMethodId,
+        CustomerName: bodyInfo.CustomerName,
+        DisplayCurrencyIso: bodyInfo.currency,
+        CustomerEmail: bodyInfo.CustomerEmail,
+        InvoiceValue: bodyInfo.amount,
+        CallBackUrl: bodyInfo.CallBackUrl,
+        ErrorUrl: bodyInfo.ErrorUrl,
       },
-      body: bodyInfo,
-      json: true,
     };
-
-    return this.httpService
-      .post(options.url, options.body, { headers: options.headers })
-      .pipe(map((response) => response.data));
+    let response = await this.sendData(options);
+   
+    let createPayment: CreatePaymentDto = {
+      userId: new mongoose.Types.ObjectId(user._id),
+      paymentReference:response.Data.InvoiceId,
+      expireDate:expireDate,
+      url:response.Data.PaymentURL
+    };
+    await this.create(createPayment);
+    return {
+      isSuccess: response.IsSuccess,
+      message: response.Message,
+      data: {
+        paymentReference: response.Data.InvoiceId,
+        paymentUrl: response.Data.PaymentURL,
+      },
+    };
   }
 
   async getPaymentStatus(getPaymentStatusDto: GetPaymentStatusDto) {
@@ -93,43 +137,71 @@ export class PaymentsService {
     let baseURL = this.configService.get<string>('baseUrl.myFatoorah');
     let options = {
       method: 'POST',
-      url: baseURL + '/v2/getPaymentStatus',
-      headers: {
-        Accept: 'application/json',
-        Authorization: 'Bearer ' + token,
-        'Content-Type': 'application/json',
+      url:
+        baseURL +
+        this.configService.get<string>('myFatoorahApi.getPaymentStatus'),
+      token: 'Bearer ' + token,
+      body: {
+        Key: getPaymentStatusDto.paymentReference,
+        KeyType: 'InvoiceId',
       },
-      body: getPaymentStatusDto,
-      json: true,
     };
 
-    try {
-      let response = await firstValueFrom(
-        this.httpService.post(options.url, options.body, {
-          headers: options.headers,
-        }),
-      );
-      let paymentId = response.data.Data.CustomerReference;
-
-      if (response.data.Data.InvoiceStatus=="Paid") {
-        await this.paymentModel.findByIdAndUpdate(paymentId, {
-          status: Status.completed,
-          result: response.data,
-        });
-      } else {
-        await this.paymentModel.findByIdAndUpdate(paymentId, {
-          status: Status.pending,
-          result: response.data,
-        });
-      }
-      return response.data;
-    } catch (error) {
-      return error.response.data;
+    let response = await this.sendData(options);
+    let paymentId = response.Data.CustomerReference;
+    if (response.Data.InvoiceStatus == 'Paid') {
+      this.updateByPaymentId(response.Data.InvoiceId, response, Status.completed);
+    } else if (response.Data.InvoiceStatus == 'Pending') {
+      this.updateByPaymentId(response.Data.InvoiceId, response, Status.pending);
+    } else{
+      this.updateByPaymentId(response.Data.InvoiceId, response, Status.failed);
     }
+    return {
+      isSuccess: response.IsSuccess,
+      message: response.Message,
+
+      data: {
+        paymentReference: response.Data.InvoiceId,
+        status: response.Data.InvoiceStatus,
+        createdDate: response.Data.CreatedDate,
+        expiryDate: response.Data.ExpiryDate,
+        expiryTime: response.Data.ExpiryTime,
+        invoiceValue: response.Data.InvoiceValue,
+
+        customerName: response.Data.CustomerName,
+
+        customerEmail: response.Data.CustomerEmail,
+      },
+    };
   }
 
   async create(createPaymentDto: CreatePaymentDto) {
     const createdPayment = await new this.paymentModel(createPaymentDto).save();
     return createdPayment._id;
+  }
+  async updateByPaymentId(paymentReference, response: Object, status: Status) {
+    await this.paymentModel.updateOne({paymentReference:paymentReference}, {
+      status: status,
+      result: response,
+    });
+  }
+  async findPayment(userId) {
+    return await this.paymentModel.findOne({ userId: userId, status: Status.pending });
+   
+  }
+
+  async sendData(options) {
+    try {
+      let response = await firstValueFrom(
+        this.httpService.post(options.url, options.body, {
+          headers:  {
+            Authorization: options.token,
+          },
+        }),
+      );
+      return response.data;
+    } catch (error) {
+      return error.response.data;
+    }
   }
 }
